@@ -1,0 +1,143 @@
+#!/usr/bin/env python
+
+"""
+Copyright 2009~2012 Bart Nagel (bart@tremby.net)
+
+This program is free software: you can redistribute it and/or modify it under 
+the terms of the GNU General Public License as published by the Free Software 
+Foundation, either version 3 of the License, or (at your option) any later 
+version.
+
+This program is distributed in the hope that it will be useful, but WITHOUT ANY 
+WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A 
+PARTICULAR PURPOSE. See the GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License along with 
+this program. If not, see <http://www.gnu.org/licenses/>.
+"""
+
+from lyrics import *
+import optparse
+
+optionparser = optparse.OptionParser(
+		usage="%prog [options] [<artist> <title>]",
+		version="%prog " + VERSION,
+		description="Get data from lyrics.wikia.com for a particular song. If "
+				"the artist and song are not given as arguments the currently "
+				"playing song is taken from MPD or Rhythmbox (in that order of "
+				"preference).",
+		epilog="To open a browser, sensible-browser is used.")
+
+group = optparse.OptionGroup(optionparser, "Modes")
+group.add_option("--mode", default="output",
+		choices=["output", "viewurl", "view", "editurl", "edit"],
+		help="Mode of operation. Default is %default, can alternatively be any "
+				"of the following.")
+group.add_option("--output", action="store_const", dest="mode",
+		const="output", help="Shorthand for --mode=output (default). Output "
+				"the lyrics as plain text to stdout.")
+group.add_option("--viewurl", action="store_const", dest="mode",
+		const="viewurl", help="Shorthand for --mode=viewurl. Print the URL of "
+				"the lyrics page.")
+group.add_option("--view", action="store_const", dest="mode",
+		const="view", help="Shorthand for --mode=view. Open a browser at the "
+				"lyrics page.")
+group.add_option("--editurl", action="store_const", dest="mode",
+		const="editurl", help="Shorthand for --mode=editurl. Print the URL of "
+				"the edit lyrics page.")
+group.add_option("--edit", action="store_const", dest="mode",
+		const="edit", help="Shorthand for --mode=edit. Open a browser at the "
+				"edit lyrics page.")
+optionparser.add_option_group(group)
+
+group = optparse.OptionGroup(optionparser, "Options")
+group.add_option("--fuzzy", "-f", action="store_true",
+		help="Do a fuzzy search rather than expecting the artist name and song "
+				"title to exist on lyrics.wikia.com exactly as given as the "
+				"arguments")
+group.add_option("--suppresstitle", "-s", action="store_true",
+		help="Don't output the artist name and song title")
+def set_encoding(option, opt_str, value, parser):
+	try:
+		"test".encode(value)
+	except LookupError as e:
+		raise optparse.OptionValueError(str(e))
+	parser.values.encoding = value
+group.add_option("--encoding", action="callback", callback=set_encoding, 
+		type="string", default=None,
+		help="Force the output encoding. The default is to detect the tty "
+				"encoding if stdout is a tty, otherwise to use UTF-8. Allowed "
+				"values are the standard Python encodings and their aliases, "
+				"listed at http://www.python.org/doc/current/library/"
+				"codecs.html#standard-encodings")
+optionparser.add_option_group(group)
+
+# parse the commandline
+(options, args) = optionparser.parse_args()
+
+if len(args) == 0:
+	artist = None
+	title = None
+elif len(args) == 2:
+	(artist, title) = args
+else:
+	optionparser.error("Expected either two non-option arguments (artist and "
+			"title) or zero")
+
+# get currently playing song if one wasn't on the commandline
+if title is None:
+	try:
+		(artist, title) = currentlyplaying()
+	except OSError:
+		print >>sys.stderr, "Couldn't get currently playing song -- ensure " \
+				"you have mpc or rhythmbox-client"
+		sys.exit(8)
+	except TypeError:
+		# None was returned since no song is playing
+		print >> sys.stderr, "No song is currently playing"
+		sys.exit(1)
+
+# do our action
+if options.mode == "output":
+	try:
+		lyrics = getlyrics(artist, title, fuzzy=options.fuzzy)
+	except IOError:
+		print >> sys.stderr, "Lyrics not found"
+		sys.exit(4)
+	except IndexError:
+		print >> sys.stderr, "No lyrics tag"
+		sys.exit(2)
+
+	instrumental = lyrics is None
+
+	output = ""
+	if not options.suppresstitle:
+		output += "%s -- %s\n\n" % (artist, title)
+	if lyrics is None:
+		output += "(instrumental)"
+	else:
+		output += lyrics
+
+	# decide encoding if it wasn't specified
+	if options.encoding is None:
+		if sys.stdout.isatty():
+			options.encoding = sys.stdout.encoding
+		else:
+			options.encoding = "utf-8"
+
+	# print the output, with a warning if it couldn't be encoded fully
+	try:
+		print output.encode(options.encoding)
+	except UnicodeEncodeError:
+		print >>sys.stderr, "warning: could not encode to encoding '%s'; " \
+				"some characters are replaced" % options.encoding
+		print output.encode(options.encoding, "replace")
+
+	sys.exit(0)
+
+url = lyricwikiurl(artist, title, edit=options.mode[0:4] != "view", fuzzy=options.fuzzy)
+
+if options.mode[4:] == "url":
+	print url
+else:
+	subprocess.Popen(["sensible-browser", url])

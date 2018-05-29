@@ -1,0 +1,10 @@
+
+jupyter
+scipy
+numpy
+lxml
+pandas
+cssselect
+nltk
+sklearn
+gensim
